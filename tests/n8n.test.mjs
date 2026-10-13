@@ -19,7 +19,7 @@ test('buildCredentials skips credentials whose env vars are empty or placeholder
     GEMINI_API_KEY: '',
   });
   assert.deepEqual(credentials.map((c) => c.id), ['langfuse', 'tn-media-s3']);
-  assert.deepEqual(skipped.map((s) => s.id), ['tn-app-db', 'anthropic-header', 'anthropic', 'gemini', 'gemini-header']);
+  assert.deepEqual(skipped.map((s) => s.id), ['tn-app-db', 'tn-core', 'anthropic-header', 'anthropic', 'gemini', 'gemini-header']);
 });
 
 test('Gemini header credential uses x-goog-api-key, not a URL query param', () => {

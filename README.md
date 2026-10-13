@@ -18,7 +18,7 @@ published. Content that fails a check is skipped or held in `needs_review` and n
   locally, Cloudflare R2 in production).
 
 > **Project status:** the local environment, Langfuse prompt management/tracing, n8n
-> provisioning, both models (live-tested) and the data model (Phase B) are done and verified. Content production and publishing are **not built yet**.
+> provisioning, both models, the data model (Phase B) and content production (Phase C, `TN-01`, verified live end to end) are done. Publishing to the platforms (Phase D) is **not built yet**, so nothing is posted anywhere.
 > See [docs/implementation-plan.md](docs/implementation-plan.md). No social platform
 > integration has been tested against a real API.
 
@@ -65,6 +65,7 @@ Other commands: `npm run logs`, `npm run ps`, `npm run down`, `npm test`.
 | PostgreSQL 17 | `localhost:5433` | DBs `n8n`, `tn_content` (app) and `langfuse`, each with its own role, all UTC |
 | SeaweedFS 4.48 | http://localhost:8333 | S3 API, stand-in for Cloudflare R2. Buckets `tn-nature-media` and `langfuse`, auth required |
 | Langfuse 4.52.0 *(profile)* | http://localhost:3000 | Prompt versions + traces. Worker, ClickHouse and Redis are internal only |
+| tn-core | http://localhost:8081 | Internal content service (image checks, hashing, S3, gates). Bearer token required |
 
 All ports bind to `127.0.0.1` only. Data lives in named volumes and survives `npm run down`.
 `docker compose down -v` deletes it. To use Langfuse Cloud instead of the local profile, see
@@ -129,6 +130,7 @@ docs/                         plan, prompts & Langfuse guide, troubleshooting
 
 - [Implementation plan & architecture](docs/implementation-plan.md)
 - [Models: Claude Opus (text) + Gemini Nano Banana 2.1 (image)](docs/models.md)
+- [Content production: TN-01 workflow, tn-core, safeguards, costs](docs/content-production.md)
 - [Data model: tables, state machine, slot claiming](docs/data-model.md)
 - [Prompts and Langfuse](docs/prompts-and-langfuse.md)
 - [Troubleshooting](docs/troubleshooting.md)

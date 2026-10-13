@@ -36,6 +36,16 @@ export function stripSchemaAnnotations(node) {
  * - output_config.format guarantees the reply parses into the caption schema.
  */
 export function buildCaptionRequest({ model, effort = 'medium', maxTokens = 16000, systemPrompt, userPrompt, schema }) {
+  return buildClaudeJsonRequest({ model, effort, maxTokens, systemPrompt, content: userPrompt, schema });
+}
+
+/**
+ * Generic Claude request returning schema-constrained JSON.
+ * `content` is a string or an array of content blocks (e.g. an image block + a text block).
+ * `systemPrompt` is optional; when present it is cached.
+ */
+/** @param {{model: string, effort?: string, maxTokens?: number, systemPrompt?: string | null, content: string | object[], schema: object}} args */
+export function buildClaudeJsonRequest({ model, effort = 'medium', maxTokens = 16000, systemPrompt = null, content, schema }) {
   if (!/^claude-/.test(model ?? '')) throw new Error(`not a Claude model id: ${model}`);
   if (!EFFORT_LEVELS.includes(effort)) throw new Error(`effort must be one of ${EFFORT_LEVELS.join('/')}`);
   return {
@@ -48,13 +58,16 @@ export function buildCaptionRequest({ model, effort = 'medium', maxTokens = 1600
     body: {
       model,
       max_tokens: maxTokens,
-      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: userPrompt }],
+      ...(systemPrompt ? { system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }] } : {}),
+      messages: [{ role: 'user', content }],
       output_config: { effort, format: { type: 'json_schema', schema: stripSchemaAnnotations(schema) } },
       fallbacks: 'default',
     },
   };
 }
+
+/** Image block for a Claude message (base64). */
+export const claudeImageBlock = (base64, mediaType = 'image/jpeg') => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } });
 
 /**
  * Interpret an Anthropic Messages response. Never throws.
@@ -86,6 +99,15 @@ export function parseCaptionResponse(res) {
   return { ok: true, caption, model: res.model, fallbackUsed, usage };
 }
 
+/**
+ * Same as parseCaptionResponse, for any schema-constrained Claude reply (result in `.json`).
+ * @returns {{ok: true, json: any, model: string, fallbackUsed: boolean, usage: any} | {ok: false, reason: string, retryable: boolean, detail: any}}
+ */
+export function parseClaudeJson(res) {
+  const r = parseCaptionResponse(res);
+  return r.ok ? { ok: true, json: r.caption, model: r.model, fallbackUsed: r.fallbackUsed, usage: r.usage } : r;
+}
+
 // Aspect ratios this model family accepts (from the API's own validation error, 2026-10-13).
 export const GEMINI_ASPECT_RATIOS = ['1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '4:1', '4:3', '4:5', '5:4', '8:1', '9:16', '16:9', '21:9'];
 
@@ -95,6 +117,7 @@ export const GEMINI_ASPECT_RATIOS = ['1:1', '1:4', '1:8', '2:3', '3:2', '3:4', '
  * batchGenerateContent variant). Field names verified against the live API via countTokens.
  * Image sizes must use an uppercase K ("2K") per the Gemini docs.
  */
+/** @param {{model: string, prompt: string, aspectRatio?: string, imageSize?: string, inputImage?: {mimeType: string, base64: string} | null}} args */
 export function buildImageRequest({ model, prompt, aspectRatio = '4:5', imageSize = '2K', inputImage = null }) {
   if (!GEMINI_IMAGE_SIZES.includes(imageSize)) throw new Error(`imageSize must be one of ${GEMINI_IMAGE_SIZES.join('/')} (uppercase K)`);
   if (!GEMINI_ASPECT_RATIOS.includes(aspectRatio)) throw new Error(`aspect ratio ${aspectRatio} not supported (${GEMINI_ASPECT_RATIOS.join(', ')})`);

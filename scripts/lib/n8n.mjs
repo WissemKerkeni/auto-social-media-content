@@ -25,6 +25,12 @@ export const CREDENTIAL_SPECS = [
     data: (e) => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION || 'auto', accessKeyId: e.S3_ACCESS_KEY_ID, secretAccessKey: e.S3_SECRET_ACCESS_KEY, forcePathStyle: e.S3_FORCE_PATH_STYLE !== 'false', ignoreSSLIssues: false }),
   },
   {
+    // n8n → tn-core (internal content service)
+    id: 'tn-core', name: 'tn-core API', type: 'httpHeaderAuth',
+    needs: ['TN_CORE_TOKEN'],
+    data: (e) => ({ name: 'Authorization', value: `Bearer ${e.TN_CORE_TOKEN}` }),
+  },
+  {
     // Preferred for HTTP Request nodes calling the Messages API (captions).
     id: 'anthropic-header', name: 'Anthropic API (x-api-key)', type: 'httpHeaderAuth',
     needs: ['ANTHROPIC_API_KEY'],

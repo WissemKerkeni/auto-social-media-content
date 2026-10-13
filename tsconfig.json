@@ -12,6 +12,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false,
     "noEmit": true
   },
   "include": ["src/**/*.ts", "prisma/**/*.ts", "tests/**/*.ts", "prisma.config.ts"]

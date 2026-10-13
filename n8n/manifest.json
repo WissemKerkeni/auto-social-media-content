@@ -1,8 +1,25 @@
 {
   "$comment": "Every workflow export in n8n/workflows must be listed here (file paths relative to n8n/workflows). IDs are fixed kebab-case (referenced by Execute Workflow nodes) so bootstrap-n8n upserts instead of duplicating. publish=true activates the workflow; scheduled producers stay false until their phase is verified.",
   "workflows": [
-    { "id": "get-prompt", "file": "sub-workflows/get-prompt.json", "publish": true },
-    { "id": "trace-generation", "file": "sub-workflows/trace-generation.json", "publish": true },
-    { "id": "tn-00-selfcheck", "file": "tn-00-selfcheck.json", "publish": false }
+    {
+      "id": "get-prompt",
+      "file": "sub-workflows/get-prompt.json",
+      "publish": true
+    },
+    {
+      "id": "trace-generation",
+      "file": "sub-workflows/trace-generation.json",
+      "publish": true
+    },
+    {
+      "id": "tn-00-selfcheck",
+      "file": "tn-00-selfcheck.json",
+      "publish": false
+    },
+    {
+      "id": "tn-01-content-producer",
+      "file": "tn-01-content-producer.json",
+      "publish": false
+    }
   ]
 }

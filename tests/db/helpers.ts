@@ -14,7 +14,7 @@ url.pathname = `/${TEST_DB}`;
 export const TEST_DATABASE_URL = url.toString();
 
 const TABLES = [
-  'publish_attempts', 'platform_publications', 'post_status_transitions', 'generation_errors',
+  'api_usage', 'publish_attempts', 'platform_publications', 'post_status_transitions', 'generation_errors',
   'posts', 'publish_slots', 'image_assets', 'location_facts', 'research_sources', 'locations', 'app_config',
 ];
 

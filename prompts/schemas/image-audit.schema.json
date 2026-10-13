@@ -1,0 +1,39 @@
+{
+  "$comment": "Vision audit output. The model only reports observations; src/core/rules.ts (decideAudit) decides approve/quarantine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "description",
+    "contains_text_or_letters",
+    "contains_watermark_logo_or_signature",
+    "contains_people",
+    "contains_animals",
+    "contains_buildings_or_infrastructure",
+    "buildings_detail",
+    "contains_paths_or_tracks",
+    "looks_photorealistic",
+    "has_visual_defects",
+    "defects_detail",
+    "plausible_for_landscape_type",
+    "matches_scene_brief",
+    "overall_quality",
+    "notes"
+  ],
+  "properties": {
+    "description": { "type": "string" },
+    "contains_text_or_letters": { "type": "boolean" },
+    "contains_watermark_logo_or_signature": { "type": "boolean" },
+    "contains_people": { "type": "boolean" },
+    "contains_animals": { "type": "boolean" },
+    "contains_buildings_or_infrastructure": { "type": "boolean" },
+    "buildings_detail": { "type": "string" },
+    "contains_paths_or_tracks": { "type": "boolean" },
+    "looks_photorealistic": { "type": "boolean" },
+    "has_visual_defects": { "type": "boolean" },
+    "defects_detail": { "type": "string" },
+    "plausible_for_landscape_type": { "type": "boolean" },
+    "matches_scene_brief": { "type": "boolean" },
+    "overall_quality": { "type": "string", "enum": ["excellent", "good", "acceptable", "poor"] },
+    "notes": { "type": "string" }
+  }
+}

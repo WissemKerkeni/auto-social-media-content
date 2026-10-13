@@ -1,0 +1,1519 @@
+{
+  "id": "tn-01-content-producer",
+  "name": "TN-01 Daily Content Producer",
+  "meta": {
+    "description": "Every 15 min: atomically claims the next due slot (Africa/Tunis schedule), picks a destination, generates a photorealistic image (Gemini) or enhances a licensed photo, validates + hashes + stores it (tn-core), audits it with Claude vision, writes the Derja-first/English caption (Claude), applies deterministic gates, and schedules one shared post with a publication row per enabled platform. Any failure parks the slot: retry (bounded by slot_max_attempts), needs_review or skipped — never published. Publishing is a separate workflow behind the kill switch."
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "every-15-minutes",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "run-now-manual",
+      "name": "Run now (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS slot_id, slot_at, local_date, local_time, attempts FROM tn_claim_due_slot($1)",
+        "options": {
+          "queryReplacement": "={{ 'n8n:' + $execution.id }}"
+        }
+      },
+      "id": "claim-due-slot",
+      "name": "Claim due slot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "tn-app-db",
+          "name": "TN App DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $input.first().json;\nreturn [{ json: { slot_id: s.slot_id, slot_at: s.slot_at, local_time: s.local_time, attempt: s.attempts, worker: 'n8n:' + $execution.id } }];"
+      },
+      "id": "context",
+      "name": "Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/prepare",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $json.slot_id, worker: $json.worker }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-prepare",
+      "name": "tn-core: prepare",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Produce?",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "produce",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "produce",
+      "name": "Produce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "nothing-to-produce",
+      "name": "Nothing to produce",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Needs image?",
+              "leftValue": "={{ $json.needs_image }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "needs-image",
+      "name": "Needs image?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "get-prompt",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "prompt_name": "={{ $('tn-core: prepare').first().json.image_prompt_name }}",
+            "label": "production"
+          }
+        },
+        "options": {}
+      },
+      "id": "prompt-image",
+      "name": "Prompt: image",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "get-prompt",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "prompt_name": "tn-image-audit",
+            "label": "production"
+          }
+        },
+        "options": {}
+      },
+      "id": "prompt-audit",
+      "name": "Prompt: audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/image-request",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $('Context').first().json.slot_id, worker: $('Context').first().json.worker, post_id: $('tn-core: prepare').first().json.post_id, prompt_text: $('Prompt: image').first().json.prompt_text }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-image-request",
+      "name": "tn-core: image request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.request.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.request.headers) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request.body) }}",
+        "options": {
+          "timeout": 240000
+        }
+      },
+      "id": "gemini-generate-image",
+      "name": "Gemini: generate image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gemini-header",
+          "name": "Gemini API (x-goog-api-key)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/ingest-image",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $('Context').first().json.slot_id, worker: $('Context').first().json.worker, post_id: $('tn-core: prepare').first().json.post_id, response: $json, prompt_version: $('Prompt: image').first().json.prompt_version, audit_prompt_text: $('Prompt: audit').first().json.prompt_text }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-ingest-image",
+      "name": "tn-core: ingest image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Image OK?",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "image-ok",
+      "name": "Image OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "trace-generation",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "trace_key": "={{ $('tn-core: prepare').first().json.trace_key }}",
+            "trace_name": "={{ 'TN-01 ' + $('tn-core: prepare').first().json.location.slug + ' ' + $('tn-core: prepare').first().json.slot.local_date + ' ' + $('tn-core: prepare').first().json.slot.local_time }}",
+            "generation_name": "={{ $('tn-core: ingest image').first().json.trace.generation_name }}",
+            "model": "={{ $('tn-core: ingest image').first().json.trace.model }}",
+            "prompt_name": "={{ $('Prompt: image').first().json.prompt_name }}",
+            "prompt_version": "={{ $('Prompt: image').first().json.prompt_version }}",
+            "input": "={{ $('tn-core: ingest image').first().json.trace.input }}",
+            "output": "={{ $('tn-core: ingest image').first().json.trace.output }}",
+            "usage_input": "={{ $('tn-core: ingest image').first().json.trace.usage_input }}",
+            "usage_output": "={{ $('tn-core: ingest image').first().json.trace.usage_output }}",
+            "level": "DEFAULT",
+            "metadata": "={{ { post_id: $('tn-core: prepare').first().json.post_id, slot_id: $('Context').first().json.slot_id, origin: $('tn-core: prepare').first().json.image_origin } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "trace-image",
+      "name": "Trace: image",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('tn-core: ingest image').first().json.audit_request.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('tn-core: ingest image').first().json.audit_request.headers) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('tn-core: ingest image').first().json.audit_request.body) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "claude-audit-image",
+      "name": "Claude: audit image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropic-header",
+          "name": "Anthropic API (x-api-key)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/apply-audit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $('Context').first().json.slot_id, worker: $('Context').first().json.worker, post_id: $('tn-core: prepare').first().json.post_id, response: $json }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-apply-audit",
+      "name": "tn-core: apply audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "trace-generation",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "trace_key": "={{ $('tn-core: prepare').first().json.trace_key }}",
+            "trace_name": "={{ 'TN-01 ' + $('tn-core: prepare').first().json.location.slug + ' ' + $('tn-core: prepare').first().json.slot.local_date + ' ' + $('tn-core: prepare').first().json.slot.local_time }}",
+            "generation_name": "={{ $('tn-core: apply audit').first().json.trace.generation_name }}",
+            "model": "={{ $('tn-core: apply audit').first().json.trace.model }}",
+            "prompt_name": "={{ $('Prompt: audit').first().json.prompt_name }}",
+            "prompt_version": "={{ $('Prompt: audit').first().json.prompt_version }}",
+            "input": "={{ $('tn-core: apply audit').first().json.trace.input }}",
+            "output": "={{ $('tn-core: apply audit').first().json.trace.output }}",
+            "usage_input": "={{ $('tn-core: apply audit').first().json.trace.usage_input }}",
+            "usage_output": "={{ $('tn-core: apply audit').first().json.trace.usage_output }}",
+            "level": "DEFAULT",
+            "metadata": "={{ { post_id: $('tn-core: prepare').first().json.post_id, slot_id: $('Context').first().json.slot_id, origin: $('tn-core: prepare').first().json.image_origin } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "trace-audit",
+      "name": "Trace: audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3300,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Approved?",
+              "leftValue": "={{ $('tn-core: apply audit').first().json.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "approved",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "get-prompt",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "prompt_name": "tn-editorial-system",
+            "label": "production"
+          }
+        },
+        "options": {}
+      },
+      "id": "prompt-caption-system",
+      "name": "Prompt: caption system",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3740,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "get-prompt",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "prompt_name": "tn-caption-request",
+            "label": "production"
+          }
+        },
+        "options": {}
+      },
+      "id": "prompt-caption-request",
+      "name": "Prompt: caption request",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3960,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/caption-request",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $('Context').first().json.slot_id, worker: $('Context').first().json.worker, post_id: $('tn-core: prepare').first().json.post_id, system_prompt_text: $('Prompt: caption system').first().json.prompt_text, request_prompt_text: $('Prompt: caption request').first().json.prompt_text }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-caption-request",
+      "name": "tn-core: caption request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4180,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.request.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.request.headers) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request.body) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "claude-caption",
+      "name": "Claude: caption",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4400,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropic-header",
+          "name": "Anthropic API (x-api-key)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/apply-caption",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $('Context').first().json.slot_id, worker: $('Context').first().json.worker, post_id: $('tn-core: prepare').first().json.post_id, response: $json, prompt_version: $('Prompt: caption request').first().json.prompt_version }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-apply-caption",
+      "name": "tn-core: apply caption",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4620,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "trace-generation",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "trace_key": "={{ $('tn-core: prepare').first().json.trace_key }}",
+            "trace_name": "={{ 'TN-01 ' + $('tn-core: prepare').first().json.location.slug + ' ' + $('tn-core: prepare').first().json.slot.local_date + ' ' + $('tn-core: prepare').first().json.slot.local_time }}",
+            "generation_name": "={{ $('tn-core: apply caption').first().json.trace.generation_name }}",
+            "model": "={{ $('tn-core: apply caption').first().json.trace.model }}",
+            "prompt_name": "={{ $('Prompt: caption request').first().json.prompt_name }}",
+            "prompt_version": "={{ $('Prompt: caption request').first().json.prompt_version }}",
+            "input": "={{ $('tn-core: apply caption').first().json.trace.input }}",
+            "output": "={{ $('tn-core: apply caption').first().json.trace.output }}",
+            "usage_input": "={{ $('tn-core: apply caption').first().json.trace.usage_input }}",
+            "usage_output": "={{ $('tn-core: apply caption').first().json.trace.usage_output }}",
+            "level": "DEFAULT",
+            "metadata": "={{ { post_id: $('tn-core: prepare').first().json.post_id, slot_id: $('Context').first().json.slot_id, origin: $('tn-core: prepare').first().json.image_origin } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "trace-caption",
+      "name": "Trace: caption",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4840,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Validated?",
+              "leftValue": "={{ $('tn-core: apply caption').first().json.status }}",
+              "rightValue": "validated",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validated",
+      "name": "Validated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5060,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/schedule",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $('Context').first().json.slot_id, worker: $('Context').first().json.worker, post_id: $('tn-core: prepare').first().json.post_id }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-schedule",
+      "name": "tn-core: schedule",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5280,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "id": "scheduled",
+      "name": "Scheduled",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/production/park",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot_id: $json.slot_id, worker: $json.worker, post_id: $json.post_id, outcome: $json.outcome, stage: $json.stage, reason: $json.reason, details: $json.details }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "tn-core-park",
+      "name": "tn-core: park",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3000,
+        460
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'prepare', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-prepare-failed",
+      "name": "Park: prepare failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: (j.error?.message || '').includes('daily_cap') ? 'skipped' : 'retry', stage: 'image', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-image-request-failed",
+      "name": "Park: image request failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'image', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-image-generation-failed",
+      "name": "Park: image generation failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'ingest', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-ingest-failed",
+      "name": "Park: ingest failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String([j.reason, j.detail].filter(Boolean).join(': ') || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'image_validate', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-image-rejected",
+      "name": "Park: image rejected",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'image_audit', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-audit-failed",
+      "name": "Park: audit failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'image_audit', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-apply-audit-failed",
+      "name": "Park: apply audit failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String('quarantined: ' + ($('tn-core: apply audit').first().json.problems || [$('tn-core: apply audit').first().json.reason]).join('; ') || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'image_audit', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-image-quarantined",
+      "name": "Park: image quarantined",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: (j.error?.message || '').includes('daily_cap') ? 'skipped' : 'retry', stage: 'caption', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-caption-request-failed",
+      "name": "Park: caption request failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'caption', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-caption-failed",
+      "name": "Park: caption failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'caption', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-apply-caption-failed",
+      "name": "Park: apply caption failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(($('tn-core: apply caption').first().json.problems || [$('tn-core: apply caption').first().json.reason]).join('; ') || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: $('tn-core: apply caption').first().json.ok === false ? 'retry' : 'needs_review', stage: 'validate', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-caption-not-validated",
+      "name": "Park: caption not validated",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5060,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Context').first().json;\nconst prep = $('tn-core: prepare').isExecuted ? $('tn-core: prepare').first().json : {};\nconst j = $input.first().json;\nconst reason = String(j.error?.message || 'unknown').slice(0, 500);\nreturn [{ json: { slot_id: ctx.slot_id, worker: ctx.worker, post_id: prep.post_id ?? null, outcome: 'retry', stage: 'schedule', reason, details: { node_output: JSON.stringify(j).slice(0, 2000) } } }];"
+      },
+      "id": "park-schedule-failed",
+      "name": "Park: schedule failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5280,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Claim due slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (manual)": {
+      "main": [
+        [
+          {
+            "node": "Claim due slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim due slot": {
+      "main": [
+        [
+          {
+            "node": "Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context": {
+      "main": [
+        [
+          {
+            "node": "tn-core: prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: prepare": {
+      "main": [
+        [
+          {
+            "node": "Produce?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: prepare failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Produce?": {
+      "main": [
+        [
+          {
+            "node": "Needs image?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing to produce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs image?": {
+      "main": [
+        [
+          {
+            "node": "Prompt: image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prompt: caption system",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt: image": {
+      "main": [
+        [
+          {
+            "node": "Prompt: audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt: audit": {
+      "main": [
+        [
+          {
+            "node": "tn-core: image request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: image request": {
+      "main": [
+        [
+          {
+            "node": "Gemini: generate image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: image request failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: generate image": {
+      "main": [
+        [
+          {
+            "node": "tn-core: ingest image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: image generation failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: ingest image": {
+      "main": [
+        [
+          {
+            "node": "Image OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: ingest failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image OK?": {
+      "main": [
+        [
+          {
+            "node": "Trace: image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: image rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trace: image": {
+      "main": [
+        [
+          {
+            "node": "Claude: audit image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude: audit image": {
+      "main": [
+        [
+          {
+            "node": "tn-core: apply audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: audit failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: apply audit": {
+      "main": [
+        [
+          {
+            "node": "Trace: audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: apply audit failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trace: audit": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Prompt: caption system",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: image quarantined",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt: caption system": {
+      "main": [
+        [
+          {
+            "node": "Prompt: caption request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt: caption request": {
+      "main": [
+        [
+          {
+            "node": "tn-core: caption request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: caption request": {
+      "main": [
+        [
+          {
+            "node": "Claude: caption",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: caption request failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude: caption": {
+      "main": [
+        [
+          {
+            "node": "tn-core: apply caption",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: caption failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: apply caption": {
+      "main": [
+        [
+          {
+            "node": "Trace: caption",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: apply caption failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trace: caption": {
+      "main": [
+        [
+          {
+            "node": "Validated?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validated?": {
+      "main": [
+        [
+          {
+            "node": "tn-core: schedule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: caption not validated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: schedule": {
+      "main": [
+        [
+          {
+            "node": "Scheduled",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Park: schedule failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: prepare failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: image request failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: image generation failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: ingest failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: image rejected": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: audit failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: apply audit failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: image quarantined": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: caption request failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: caption failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: apply caption failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: caption not validated": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Park: schedule failed": {
+      "main": [
+        [
+          {
+            "node": "tn-core: park",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Tunis",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

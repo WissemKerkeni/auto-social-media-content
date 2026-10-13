@@ -39,7 +39,7 @@ const withLangfuse = langfuseProfileEnabled(env);
 await check('Compose services', () => {
   const lines = compose('ps', '--all', '--format', 'json').split('\n').filter(Boolean);
   const services = lines.map((l) => JSON.parse(l));
-  const expected = ['postgres', 'n8n', 'seaweedfs'];
+  const expected = ['postgres', 'n8n', 'seaweedfs', 'tn-core'];
   if (withLangfuse) expected.push('clickhouse', 'langfuse-redis', 'langfuse-worker', 'langfuse-web');
   const summary = expected.map((name) => {
     const s = services.find((x) => x.Service === name);
@@ -66,6 +66,15 @@ await check('n8n /healthz', async () => {
   const res = await fetch(`http://localhost:${env.N8N_HOST_PORT || 5678}/healthz`, { signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return `HTTP ${res.status}`;
+});
+
+await check('tn-core health + auth', async () => {
+  const base = `http://localhost:${env.TN_CORE_HOST_PORT || 8081}`;
+  const health = await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(5000) });
+  if (!health.ok) throw new Error(`/healthz HTTP ${health.status}`);
+  const anon = await fetch(`${base}/v1/production/prepare`, { method: 'POST', signal: AbortSignal.timeout(5000) });
+  if (anon.status !== 401) throw new Error(`unauthenticated call returned HTTP ${anon.status}, expected 401`);
+  return 'healthy; rejects unauthenticated calls';
 });
 
 await check('n8n container timezone', () => {

@@ -1,0 +1,103 @@
+{
+  "id": "trace-generation",
+  "name": "[SUB] Trace Generation",
+  "meta": {
+    "description": "Records one LLM/image call in Langfuse as an OpenTelemetry generation span (OTLP/HTTP JSON → /api/public/otel/v1/traces, ingestion version 4). Langfuse v4 rejects the legacy trace-create/generation-create ingestion events. trace_key is any stable string (e.g. 'post:<uuid>'); its SHA-256 gives the 32-hex trace id, so every call for one post lands in one trace. Links the generation to the prompt name+version. Tracing never blocks: failures return traced=false. Do NOT pass image bytes/base64 as input/output — pass descriptions, sizes, hashes or storage keys.",
+    "inputs": "trace_key, trace_name, generation_name, model, prompt_name, prompt_version, input, output, usage_input, usage_output, start_time, end_time, level ('DEFAULT'|'WARNING'|'ERROR'), status_message, metadata (object)",
+    "outputs": "traced (boolean), trace_id (32-hex), span_id (16-hex), errors (array)"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "trace_key", "type": "string" },
+            { "name": "trace_name", "type": "string" },
+            { "name": "generation_name", "type": "string" },
+            { "name": "model", "type": "string" },
+            { "name": "prompt_name", "type": "string" },
+            { "name": "prompt_version", "type": "number" },
+            { "name": "input", "type": "any" },
+            { "name": "output", "type": "any" },
+            { "name": "usage_input", "type": "number" },
+            { "name": "usage_output", "type": "number" },
+            { "name": "start_time", "type": "string" },
+            { "name": "end_time", "type": "string" },
+            { "name": "level", "type": "string" },
+            { "name": "status_message", "type": "string" },
+            { "name": "metadata", "type": "object" }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst t = $input.first().json;\nif (!t.trace_key || !t.generation_name) throw new Error('trace-generation: trace_key and generation_name are required');\n\nconst traceId = crypto.createHash('sha256').update(String(t.trace_key)).digest('hex').slice(0, 32);\nconst spanId = crypto.randomBytes(8).toString('hex');\nconst nowIso = new Date().toISOString();\nconst nanos = (iso) => (BigInt(Date.parse(iso || nowIso)) * 1000000n).toString();\nconst json = (v) => (typeof v === 'string' ? v : JSON.stringify(v ?? null));\nconst str = (key, value) => ({ key, value: { stringValue: String(value) } });\nconst int = (key, value) => ({ key, value: { intValue: String(Math.trunc(Number(value))) } });\n\nconst env = $env.TN_ENV || 'unknown';\nconst level = ['DEBUG', 'DEFAULT', 'WARNING', 'ERROR'].includes(t.level) ? t.level : 'DEFAULT';\nconst usage = { input: Number(t.usage_input) || 0, output: Number(t.usage_output) || 0 };\nusage.total = usage.input + usage.output;\nconst metadata = { ...(t.metadata || {}), n8n_execution_id: $execution.id, n8n_workflow_id: $workflow.id, trace_key: t.trace_key };\n\nconst attributes = [\n  str('langfuse.observation.type', 'generation'),\n  str('langfuse.trace.name', t.trace_name || t.generation_name),\n  { key: 'langfuse.trace.tags', value: { arrayValue: { values: [{ stringValue: 'tn-nature' }, { stringValue: env }] } } },\n  str('langfuse.trace.metadata.env', env),\n  str('langfuse.environment', env),\n  str('langfuse.observation.level', level),\n  str('langfuse.observation.input', json(t.input)),\n  str('langfuse.observation.output', json(t.output)),\n  ...(t.model ? [str('langfuse.observation.model.name', t.model)] : []),\n  ...(usage.total ? [str('langfuse.observation.usage_details', JSON.stringify(usage))] : []),\n  ...(t.status_message ? [str('langfuse.observation.status_message', t.status_message)] : []),\n  ...(t.prompt_name && t.prompt_version != null && t.prompt_version !== ''\n    ? [str('langfuse.observation.prompt.name', t.prompt_name), int('langfuse.observation.prompt.version', t.prompt_version)]\n    : []),\n  ...Object.entries(metadata).map(([k, v]) => str(`langfuse.observation.metadata.${k}`, json(v)))\n];\n\nconst body = {\n  resourceSpans: [{\n    resource: { attributes: [str('service.name', 'tn-nature-n8n')] },\n    scopeSpans: [{\n      scope: { name: 'tn-nature.trace-generation', version: '1' },\n      spans: [{\n        traceId,\n        spanId,\n        name: t.generation_name,\n        kind: 1,\n        startTimeUnixNano: nanos(t.start_time),\n        endTimeUnixNano: nanos(t.end_time),\n        attributes,\n        status: level === 'ERROR' ? { code: 2, message: t.status_message || 'error' } : { code: 1 }\n      }]\n    }]\n  }]\n};\nreturn [{ json: { body, trace_id: traceId, span_id: spanId } }];\n"
+      },
+      "id": "build-span",
+      "name": "Build OTLP span",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LANGFUSE_BASE_URL }}/api/public/otel/v1/traces",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-langfuse-ingestion-version", "value": "4" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "langfuse-otlp",
+      "name": "Langfuse: OTLP export",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpBasicAuth": { "id": "langfuse", "name": "Langfuse API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// OTLP answers 2xx with {} or { partialSuccess: { rejectedSpans, errorMessage } }. A node error arrives as { error }.\nconst built = $('Build OTLP span').first().json;\nconst r = $input.first().json;\nconst errors = [];\nif (r.error) errors.push({ message: String(r.error.message || r.error) });\nconst rejected = Number(r.partialSuccess?.rejectedSpans || 0);\nif (rejected) errors.push({ message: `rejected ${rejected} span(s): ${r.partialSuccess.errorMessage || ''}` });\nreturn [{ json: { traced: errors.length === 0, trace_id: built.trace_id, span_id: built.span_id, errors } }];\n"
+      },
+      "id": "result",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Build OTLP span", "type": "main", "index": 0 }]]
+    },
+    "Build OTLP span": {
+      "main": [[{ "node": "Langfuse: OTLP export", "type": "main", "index": 0 }]]
+    },
+    "Langfuse: OTLP export": {
+      "main": [[{ "node": "Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

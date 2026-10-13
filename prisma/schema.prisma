@@ -1,0 +1,374 @@
+// Tunisia Nature Content — application database (PostgreSQL).
+//
+// Conventions
+// - Tables/columns are snake_case (@@map/@map) so n8n's Postgres node can query them directly.
+// - Every timestamp is timestamptz. Databases default to UTC; Africa/Tunis conversion is explicit.
+// - IDs are database-generated UUIDs (gen_random_uuid) so SQL functions can insert rows too.
+// - Behaviour that must hold for every caller (Prisma, n8n, psql) lives in the database:
+//   CHECK constraints, the post state machine trigger, and the slot/destination claim
+//   functions — see prisma/migrations/*_functions/migration.sql.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Platform {
+  facebook
+  instagram
+  tiktok
+}
+
+/// draft → validated → scheduled → publishing → published, plus needs_review / skipped / failed.
+/// Allowed transitions are enforced by a trigger (tn_post_status_guard).
+enum PostStatus {
+  draft
+  validated
+  scheduled
+  publishing
+  published
+  needs_review
+  skipped
+  failed
+}
+
+enum SlotStatus {
+  pending
+  claimed
+  produced
+  skipped
+  failed
+}
+
+/// reconciling = outcome unknown (e.g. timeout); query the platform before any retry.
+/// blocked     = platform not authorized (e.g. TikTok without Direct Post approval).
+enum PublicationStatus {
+  pending
+  publishing
+  reconciling
+  published
+  failed
+  blocked
+  skipped
+}
+
+enum ImageOrigin {
+  ai_generated
+  licensed_photo
+  licensed_photo_enhanced
+}
+
+enum AssetStatus {
+  pending
+  approved
+  rejected
+  quarantined
+}
+
+enum FactStatus {
+  unverified
+  verified
+  rejected
+}
+
+enum SourceKind {
+  official
+  government
+  academic
+  ngo
+  encyclopedia
+  media
+  other
+}
+
+model Location {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug           String    @unique
+  nameEn         String    @map("name_en")
+  nameAr         String    @map("name_ar")
+  governorate    String
+  /// coarse region used in prompts, e.g. "northwest", "south"
+  region         String
+  /// e.g. mountain_forest, wetland, coast, island, salt_lake, oasis, desert, canyon, steppe
+  landscapeType  String    @map("landscape_type")
+  latitude       Decimal?  @db.Decimal(9, 6)
+  longitude      Decimal?  @db.Decimal(9, 6)
+  /// Non-factual scene ideas for AI image prompts (what to depict, not claims about the place).
+  sceneBriefs    String[]  @map("scene_briefs")
+  /// Names/governorate confirmed against a recorded source. Seeding never sets this.
+  geoVerified    Boolean   @default(false) @map("geo_verified")
+  active         Boolean   @default(true)
+  /// Per-location override of config destination_cooldown_hours.
+  cooldownHours  Int?      @map("cooldown_hours")
+  lastFeaturedAt DateTime? @map("last_featured_at") @db.Timestamptz(3)
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  sources ResearchSource[]
+  facts   LocationFact[]
+  assets  ImageAsset[]
+  posts   Post[]
+  errors  GenerationError[]
+
+  @@index([active, lastFeaturedAt])
+  @@map("locations")
+}
+
+model ResearchSource {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  locationId String?    @map("location_id") @db.Uuid
+  url        String     @unique
+  title      String
+  publisher  String?
+  kind       SourceKind
+  accessedAt DateTime   @map("accessed_at") @db.Timestamptz(3)
+  notes      String?
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  location Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  facts    LocationFact[]
+
+  @@map("research_sources")
+}
+
+/// A claim may appear in a caption only if status = verified AND it cites a source.
+model LocationFact {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  locationId         String     @map("location_id") @db.Uuid
+  sourceId           String     @map("source_id") @db.Uuid
+  claimEn            String     @map("claim_en")
+  claimAr            String?    @map("claim_ar")
+  status             FactStatus @default(unverified)
+  verifiedAt         DateTime?  @map("verified_at") @db.Timestamptz(3)
+  verificationMethod String?    @map("verification_method")
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  location Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  source   ResearchSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@unique([locationId, claimEn])
+  @@index([locationId, status])
+  @@map("location_facts")
+}
+
+model ImageAsset {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  locationId    String?     @map("location_id") @db.Uuid
+  origin        ImageOrigin
+  status        AssetStatus @default(pending)
+  /// For licensed_photo_enhanced: the licensed source asset it was derived from.
+  parentAssetId String?     @map("parent_asset_id") @db.Uuid
+
+  // Rights (required by CHECK constraint for any non-AI origin)
+  sourceUrl           String?   @map("source_url")
+  sourcePageUrl       String?   @map("source_page_url")
+  author              String?
+  licenseCode         String?   @map("license_code")
+  licenseUrl          String?   @map("license_url")
+  attributionText     String?   @map("attribution_text")
+  attributionRequired Boolean   @default(false) @map("attribution_required")
+  rightsVerified      Boolean   @default(false) @map("rights_verified")
+  rightsVerifiedAt    DateTime? @map("rights_verified_at") @db.Timestamptz(3)
+  rightsNotes         String?   @map("rights_notes")
+
+  // AI provenance
+  aiGenerated      Boolean @default(false) @map("ai_generated")
+  aiEdited         Boolean @default(false) @map("ai_edited")
+  aiModel          String? @map("ai_model")
+  promptName       String? @map("prompt_name")
+  promptVersion    Int?    @map("prompt_version")
+  generationParams Json?   @map("generation_params")
+  langfuseTraceId  String? @map("langfuse_trace_id")
+  /// Result of the automated image audit (vision check against the image rules).
+  auditResult      Json?   @map("audit_result")
+
+  // File
+  storageKey String? @unique @map("storage_key")
+  publicUrl  String? @map("public_url")
+  mimeType   String? @map("mime_type")
+  width      Int?
+  height     Int?
+  bytes      Int?
+  sha256     String? @unique @db.Char(64)
+  /// 64-bit perceptual hash as 16 hex chars; near-duplicates found by Hamming distance.
+  phash      String? @db.Char(16)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  location Location?    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  parent   ImageAsset?  @relation("AssetDerivation", fields: [parentAssetId], references: [id], onDelete: Restrict)
+  children ImageAsset[] @relation("AssetDerivation")
+  posts    Post[]
+
+  @@index([phash])
+  @@index([locationId, status])
+  @@map("image_assets")
+}
+
+model PublishSlot {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The instant the post should go out (UTC). Unique: one slot per instant.
+  slotAt         DateTime   @unique @map("slot_at") @db.Timestamptz(3)
+  /// Wall-clock in the publishing timezone (Africa/Tunis), for humans and daily caps.
+  localDate      DateTime   @map("local_date") @db.Date
+  localTime      String     @map("local_time") @db.Char(5)
+  status         SlotStatus @default(pending)
+  claimedBy      String?    @map("claimed_by")
+  claimedAt      DateTime?  @map("claimed_at") @db.Timestamptz(3)
+  leaseExpiresAt DateTime?  @map("lease_expires_at") @db.Timestamptz(3)
+  attempts       Int        @default(0)
+  skipReason     String?    @map("skip_reason")
+  lastError      String?    @map("last_error")
+  createdAt      DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  post   Post?
+  errors GenerationError[]
+
+  @@index([status, slotAt])
+  @@index([localDate])
+  @@map("publish_slots")
+}
+
+/// One shared content item per slot, cross-posted to every enabled platform.
+model Post {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slotId       String     @unique @map("slot_id") @db.Uuid
+  locationId   String     @map("location_id") @db.Uuid
+  imageAssetId String?    @map("image_asset_id") @db.Uuid
+  status       PostStatus @default(draft)
+
+  title           String?
+  captionDerja    String?  @map("caption_derja")
+  captionEn       String?  @map("caption_en")
+  hashtags        String[]
+  altText         String?  @map("alt_text")
+  disclosureDerja String?  @map("disclosure_derja")
+  disclosureEn    String?  @map("disclosure_en")
+  supportedClaims Json?    @map("supported_claims")
+  reviewReasons   String[] @map("review_reasons")
+  /// SHA-256 of the normalized final caption + image sha256. Unique: no duplicate posts.
+  contentHash     String?  @unique @map("content_hash") @db.Char(64)
+
+  captionModel         String? @map("caption_model")
+  captionPromptVersion Int?    @map("caption_prompt_version")
+  langfuseTraceId      String? @map("langfuse_trace_id")
+
+  scheduledFor DateTime? @map("scheduled_for") @db.Timestamptz(3)
+  publishedAt  DateTime? @map("published_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  slot         PublishSlot            @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  location     Location               @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  imageAsset   ImageAsset?            @relation(fields: [imageAssetId], references: [id], onDelete: Restrict)
+  publications PlatformPublication[]
+  transitions  PostStatusTransition[]
+  errors       GenerationError[]
+
+  @@index([status, scheduledFor])
+  @@index([locationId, createdAt])
+  @@map("posts")
+}
+
+/// Exactly one row per (post, platform); attempts are tracked separately.
+model PlatformPublication {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  postId              String            @map("post_id") @db.Uuid
+  platform            Platform
+  status              PublicationStatus @default(pending)
+  attemptCount        Int               @default(0) @map("attempt_count")
+  nextAttemptAt       DateTime?         @map("next_attempt_at") @db.Timestamptz(3)
+  lastErrorCode       String?           @map("last_error_code")
+  lastError           String?           @map("last_error")
+  /// Instagram media container id (created before publish; reused on retry).
+  externalContainerId String?           @map("external_container_id")
+  externalPostId      String?           @map("external_post_id")
+  permalink           String?
+  responseMeta        Json?             @map("response_meta")
+  publishedAt         DateTime?         @map("published_at") @db.Timestamptz(3)
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  post     Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  attempts PublishAttempt[]
+
+  @@unique([postId, platform])
+  @@index([status, nextAttemptAt])
+  @@map("platform_publications")
+}
+
+model PublishAttempt {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicationId String    @map("publication_id") @db.Uuid
+  attemptNo     Int       @map("attempt_no")
+  startedAt     DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(3)
+  /// success | transient_error | permanent_error | timeout_unknown | reconciled_published | reconciled_absent
+  outcome       String?
+  httpStatus    Int?      @map("http_status")
+  errorCode     String?   @map("error_code")
+  errorMessage  String?   @map("error_message")
+  requestId     String?   @map("request_id")
+  response      Json?
+
+  publication PlatformPublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@unique([publicationId, attemptNo])
+  @@map("publish_attempts")
+}
+
+/// Written by the tn_post_status_guard trigger on every status change.
+model PostStatusTransition {
+  id         BigInt      @id @default(autoincrement())
+  postId     String      @map("post_id") @db.Uuid
+  fromStatus PostStatus? @map("from_status")
+  toStatus   PostStatus  @map("to_status")
+  reason     String?
+  actor      String
+  at         DateTime    @default(now()) @db.Timestamptz(3)
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, at])
+  @@map("post_status_transitions")
+}
+
+/// Runtime configuration (kill switch, schedule, caps). Seeded from .env; the DB value wins.
+model AppConfig {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("app_config")
+}
+
+model GenerationError {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// claim | location | image | image_audit | caption | validate | upload | persist | schedule | publish
+  stage      String
+  slotId     String?  @map("slot_id") @db.Uuid
+  postId     String?  @map("post_id") @db.Uuid
+  locationId String?  @map("location_id") @db.Uuid
+  errorCode  String?  @map("error_code")
+  message    String
+  retryable  Boolean  @default(false)
+  details    Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  slot     PublishSlot? @relation(fields: [slotId], references: [id], onDelete: SetNull)
+  post     Post?        @relation(fields: [postId], references: [id], onDelete: SetNull)
+  location Location?    @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([stage, createdAt])
+  @@map("generation_errors")
+}

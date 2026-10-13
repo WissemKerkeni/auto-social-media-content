@@ -1,0 +1,42 @@
+{
+  "$comment": "Caption output contract. Sent to Claude as output_config.format (json_schema), so the response is guaranteed to parse into this shape. Structured outputs reject minLength/maxLength/minimum etc., so lengths and counts are enforced after parsing by scripts/lib/caption.mjs (validateCaption).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "caption_derja",
+    "caption_en",
+    "hashtags",
+    "alt_text",
+    "image_origin",
+    "source_attribution",
+    "supported_claims",
+    "disclosure_text",
+    "validation_status",
+    "review_reasons"
+  ],
+  "properties": {
+    "title": { "type": "string" },
+    "caption_derja": { "type": "string" },
+    "caption_en": { "type": "string" },
+    "hashtags": { "type": "array", "items": { "type": "string" } },
+    "alt_text": { "type": "string" },
+    "image_origin": { "type": "string", "enum": ["ai_generated", "licensed_photo_enhanced", "licensed_photo"] },
+    "source_attribution": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+    "supported_claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "fact_id"],
+        "properties": {
+          "claim": { "type": "string" },
+          "fact_id": { "type": "string" }
+        }
+      }
+    },
+    "disclosure_text": { "type": "string" },
+    "validation_status": { "type": "string", "enum": ["ok", "needs_review"] },
+    "review_reasons": { "type": "array", "items": { "type": "string" } }
+  }
+}

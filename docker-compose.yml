@@ -1,0 +1,288 @@
+# Local development stack.
+#   Core:     PostgreSQL + n8n + SeaweedFS (S3-compatible stand-in for Cloudflare R2)
+#   Profile "langfuse" (COMPOSE_PROFILES in .env): self-hosted Langfuse v4 for prompts + tracing
+#
+# Usage:  npm run dev:up   (setup → up → ensure DBs → seed prompts → bootstrap n8n → doctor)
+# All host ports bind to 127.0.0.1 only. Images are pinned; bump deliberately.
+name: ${COMPOSE_PROJECT_NAME:-tn-nature}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# n8n reads these from files (N8N_ENCRYPTION_KEY_FILE / DB_POSTGRESDB_PASSWORD_FILE), so they
+# are NOT in n8n's process environment and cannot be read through $env in workflows.
+secrets:
+  n8n_encryption_key:
+    environment: N8N_ENCRYPTION_KEY
+  n8n_db_password:
+    environment: N8N_DB_PASSWORD
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      # UTC server default (Langfuse requirement; unambiguous timestamps for Prisma).
+      TZ: UTC
+      PGTZ: UTC
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?run npm run setup to create .env}
+      POSTGRES_DB: postgres
+      # Consumed by docker/postgres/init (first boot, and re-run by npm run dev:up).
+      N8N_DB_NAME: ${N8N_DB_NAME:-n8n}
+      N8N_DB_USER: ${N8N_DB_USER:-n8n}
+      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD:?}
+      APP_DB_NAME: ${APP_DB_NAME:-tn_content}
+      APP_DB_USER: ${APP_DB_USER:-tn_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?}
+      LANGFUSE_DB_NAME: ${LANGFUSE_DB_NAME:-langfuse}
+      LANGFUSE_DB_USER: ${LANGFUSE_DB_USER:-langfuse}
+      LANGFUSE_DB_PASSWORD: ${LANGFUSE_DB_PASSWORD:-}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  n8n:
+    image: n8nio/n8n:2.43.4
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - n8n_encryption_key
+      - n8n_db_password
+    environment:
+      # Database (password from secret file)
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME:-n8n}
+      DB_POSTGRESDB_USER: ${N8N_DB_USER:-n8n}
+      DB_POSTGRESDB_PASSWORD_FILE: /run/secrets/n8n_db_password
+      # Timezone: schedule triggers fire in Africa/Tunis
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Africa/Tunis}
+      TZ: ${TZ:-Africa/Tunis}
+      # Persistent encryption key (must match the key stored in the n8n_data volume)
+      N8N_ENCRYPTION_KEY_FILE: /run/secrets/n8n_encryption_key
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      # URLs
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
+      # $env access is allowed so workflows can read the NON-SECRET config below
+      # (secrets are files, not env vars; API keys live in n8n credentials).
+      # Never add a secret to this environment block.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      TN_ENV: local
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-http://langfuse-web:3000}
+      # Model selection (names only; API keys are n8n credentials)
+      ANTHROPIC_TEXT_MODEL: ${ANTHROPIC_TEXT_MODEL:-claude-opus-5-5}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-medium}
+      ANTHROPIC_MAX_TOKENS: ${ANTHROPIC_MAX_TOKENS:-16000}
+      GEMINI_IMAGE_MODEL: ${GEMINI_IMAGE_MODEL:-gemini-nano-banana-2.1}
+      GEMINI_IMAGE_SIZE: ${GEMINI_IMAGE_SIZE:-2K}
+      GEMINI_IMAGE_ASPECT_RATIO: ${GEMINI_IMAGE_ASPECT_RATIO:-4:5}
+      # Code nodes may require('crypto') (SHA-256 content hashes, OTel trace ids). Nothing else.
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      N8N_RESTRICT_FILE_ACCESS_TO: /files
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      # Logging (structured JSON to stdout; collected by Docker)
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+      N8N_LOG_OUTPUT: console
+      N8N_LOG_FORMAT: json
+      # Execution history pruning (keeps the DB small)
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-336}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # /files/prompts holds rendered prompt fallbacks written by npm run seed-prompts
+      - ./n8n/files:/files
+      - ./n8n/workflows:/workflows:ro
+    ports:
+      - "127.0.0.1:${N8N_HOST_PORT:-5678}:5678"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:5678/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["mini", "-dir=/data"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?run npm run setup to create .env}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?}
+      S3_BUCKET: ${S3_BUCKET:-tn-nature-media}
+    volumes:
+      - seaweedfs_data:/data
+    ports:
+      - "127.0.0.1:${S3_HOST_PORT:-8333}:8333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ───────────────────────── profile: langfuse ─────────────────────────
+  # Based on langfuse/langfuse docker-compose.yml (v4), reusing this stack's Postgres
+  # (own `langfuse` DB, UTC) and SeaweedFS (own `langfuse` bucket) instead of extra copies.
+
+  storage-init:
+    image: chrislusf/seaweedfs:4.48
+    profiles: ["langfuse"]
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    environment:
+      BUCKET: ${LANGFUSE_S3_BUCKET:-langfuse}
+    entrypoint: ["/bin/sh", "-c"]
+    # Idempotent: "already exists" counts as success.
+    command:
+      - >-
+        out=$$(echo "s3.bucket.create -name $$BUCKET" | weed shell -master=seaweedfs:9333 -filer=seaweedfs:8888 2>&1);
+        echo "$$out" | grep -qE "created bucket|already exists" && echo "bucket $$BUCKET ready" || { echo "$$out"; exit 1; }
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    profiles: ["langfuse"]
+    restart: unless-stopped
+    logging: *default-logging
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-}
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  langfuse-redis:
+    image: redis:7-alpine
+    profiles: ["langfuse"]
+    restart: unless-stopped
+    logging: *default-logging
+    command: ["redis-server", "--requirepass", "${LANGFUSE_REDIS_PASSWORD:-}", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - langfuse_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDISCLI_AUTH\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDISCLI_AUTH: ${LANGFUSE_REDIS_PASSWORD:-}
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:4.52.0
+    profiles: ["langfuse"]
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on: &langfuse-depends-on
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER:-langfuse}:${LANGFUSE_DB_PASSWORD:-}@postgres:5432/${LANGFUSE_DB_NAME:-langfuse}
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_HOST_PORT:-3000}
+      SALT: ${LANGFUSE_SALT:-}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-}
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_BUCKET:-langfuse}
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://seaweedfs:8333
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_BUCKET:-langfuse}
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://seaweedfs:8333
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+
+  langfuse-web:
+    image: langfuse/langfuse:4.52.0
+    profiles: ["langfuse"]
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on: *langfuse-depends-on
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-}
+      # Next.js standalone binds to $HOSTNAME (the container id by default); bind all
+      # interfaces so the loopback healthcheck works.
+      HOSTNAME: 0.0.0.0
+      # Browser-facing media URL (host) vs. internal URL (container network).
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:${S3_HOST_PORT:-8333}
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://seaweedfs:8333
+      # Headless init: org, project, API keys (same pair n8n + seed-prompts use) and admin user.
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+    ports:
+      - "127.0.0.1:${LANGFUSE_HOST_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/public/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  n8n_data:
+  seaweedfs_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_redis_data:

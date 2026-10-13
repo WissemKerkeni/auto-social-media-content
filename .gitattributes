@@ -1,0 +1,7 @@
+# Normalise line endings. Shell scripts run inside Linux containers and break with CRLF.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary

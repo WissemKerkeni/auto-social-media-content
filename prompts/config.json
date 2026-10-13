@@ -1,0 +1,25 @@
+{
+  "$comment": "Deploy-time values rendered into prompts/templates by `npm run seed-prompts`. Placeholders are {{snake_case}}; each template's header lists which it uses. Disclosure templates are filled by code (scripts/lib/content.mjs), not by the model. No secrets here.",
+  "page_name": "Tunisia Nature",
+  "base_hashtags": ["#تونس", "#طبيعة_تونس", "#تونس_الخضراء", "#Tunisia", "#VisitTunisia", "#TunisiaNature"],
+  "hashtag_max": 10,
+  "caption_derja_max_chars": 600,
+  "caption_en_max_chars": 600,
+  "alt_text_max_chars": 250,
+  "ai_alt_text_prefix": "AI-generated image:",
+  "ai_image_style": "photorealistic landscape photograph: natural daylight, true-to-life colors, realistic textures, atmospheric depth and natural depth of field, as if shot on a full-frame camera with a 24-70 mm lens; no HDR look, no oversaturation, no fantasy or surreal elements",
+  "disclosure": {
+    "ai_generated": {
+      "derja": "🤖 الصورة هاذي مولّدة بالذكاء الاصطناعي، مستوحاة من {{place_ar}}، موش تصويرة حقيقية للبلاصة.",
+      "en": "🤖 AI-generated image inspired by {{place_en}}; not a real photo of this location."
+    },
+    "licensed_photo_enhanced": {
+      "derja": "📷 تصويرة حقيقية من {{place_ar}}، الضو والألوان تحسّنو بالذكاء الاصطناعي. {{attribution}}",
+      "en": "📷 Real photo of {{place_en}}; light and colors enhanced with AI. {{attribution}}"
+    },
+    "licensed_photo": {
+      "derja": "📷 تصويرة حقيقية من {{place_ar}}. {{attribution}}",
+      "en": "📷 Real photo of {{place_en}}. {{attribution}}"
+    }
+  }
+}

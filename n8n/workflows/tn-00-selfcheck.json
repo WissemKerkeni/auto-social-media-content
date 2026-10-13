@@ -1,0 +1,101 @@
+{
+  "id": "tn-00-selfcheck",
+  "name": "TN-00 Self-check (Langfuse prompt + trace)",
+  "meta": {
+    "description": "Run by `npm run bootstrap:n8n` (n8n execute) and safe to run manually. Fetches tn-editorial-system through [SUB] Get Prompt and writes a test trace through [SUB] Trace Generation. Makes no LLM calls and costs nothing.",
+    "outputs": "ok (boolean), trace_id, prompt_source, prompt_version, traced"
+  },
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { trace_key: `selfcheck:${$execution.id}:${Date.now()}`, started_at: new Date().toISOString() } }];\n"
+      },
+      "id": "context",
+      "name": "Self-check context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "get-prompt", "mode": "id" },
+        "workflowInputs": {
+          "value": {
+            "prompt_name": "tn-editorial-system",
+            "label": "production"
+          }
+        },
+        "options": {}
+      },
+      "id": "exec-get-prompt",
+      "name": "SUB: Get Prompt",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "trace-generation", "mode": "id" },
+        "workflowInputs": {
+          "value": {
+            "trace_key": "={{ $('Self-check context').first().json.trace_key }}",
+            "trace_name": "tn-00-selfcheck",
+            "generation_name": "selfcheck-noop",
+            "model": "none",
+            "prompt_name": "={{ $json.prompt_name }}",
+            "prompt_version": "={{ $json.prompt_version }}",
+            "input": "={{ { check: 'prompt fetch', prompt_chars: $json.prompt_text.length } }}",
+            "output": "={{ { source: $json.source } }}",
+            "start_time": "={{ $('Self-check context').first().json.started_at }}",
+            "end_time": "={{ new Date().toISOString() }}",
+            "level": "DEFAULT",
+            "metadata": "={{ { purpose: 'bootstrap self-check' } }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "exec-trace",
+      "name": "SUB: Trace Generation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prompt = $('SUB: Get Prompt').first().json;\nconst trace = $input.first().json;\nreturn [{ json: {\n  ok: prompt.source === 'langfuse' && trace.traced === true,\n  trace_id: trace.trace_id,\n  prompt_source: prompt.source,\n  prompt_version: prompt.prompt_version,\n  prompt_chars: prompt.prompt_text.length,\n  traced: trace.traced,\n  trace_errors: trace.errors\n} }];\n"
+      },
+      "id": "result",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0]
+    }
+  ],
+  "connections": {
+    "Manual trigger": {
+      "main": [[{ "node": "Self-check context", "type": "main", "index": 0 }]]
+    },
+    "Self-check context": {
+      "main": [[{ "node": "SUB: Get Prompt", "type": "main", "index": 0 }]]
+    },
+    "SUB: Get Prompt": {
+      "main": [[{ "node": "SUB: Trace Generation", "type": "main", "index": 0 }]]
+    },
+    "SUB: Trace Generation": {
+      "main": [[{ "node": "Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

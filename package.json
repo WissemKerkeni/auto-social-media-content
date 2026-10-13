@@ -1,0 +1,49 @@
+{
+  "name": "tn-nature-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Automated Tunisian nature content: n8n + PostgreSQL + Gemini, cross-posting to Facebook, Instagram and TikTok.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "check-env": "node scripts/check-env.mjs",
+    "dev:up": "node scripts/dev-up.mjs",
+    "seed-prompts": "node scripts/seed-prompts.mjs",
+    "bootstrap:n8n": "node scripts/bootstrap-n8n.mjs",
+    "up": "docker compose up -d --wait",
+    "down": "docker compose down",
+    "logs": "docker compose logs -f --tail=100",
+    "ps": "docker compose ps",
+    "doctor": "node scripts/doctor.mjs",
+    "verify:models": "node scripts/verify-models.mjs",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "typecheck": "tsc -p tsconfig.json",
+    "test:db": "node --import tsx --test --test-concurrency=1 \"tests/db/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "dotenv": "17.2.3",
+    "pg": "8.23.1",
+    "prisma": "7.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.12",
+    "@types/pg": "8.15.5",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "mysql2": "3.24.5",
+    "deepmerge-ts": "8.0.2"
+  }
+}

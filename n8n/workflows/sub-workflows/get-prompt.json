@@ -1,0 +1,133 @@
+{
+  "id": "get-prompt",
+  "name": "[SUB] Get Prompt",
+  "meta": {
+    "description": "Fetches a prompt from Langfuse by label (default production). If Langfuse is unreachable or errors, serves /files/prompts/<name>.md written by `npm run seed-prompts` (the last known production text). Prompt fetch failure never blocks content production unless the fallback file is also missing.",
+    "inputs": "prompt_name (string, ^[a-z0-9-]+$), label (string, optional, default 'production')",
+    "outputs": "prompt_text (string), prompt_name (string), prompt_version (number|null), prompt_config (object), source ('langfuse'|'file_fallback')"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "prompt_name", "type": "string" },
+            { "name": "label", "type": "string" }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate input before it is used in a URL or a file path.\nconst { prompt_name, label } = $input.first().json;\nif (typeof prompt_name !== 'string' || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(prompt_name)) {\n  throw new Error(`get-prompt: invalid prompt_name ${JSON.stringify(prompt_name)}`);\n}\nconst lbl = label || 'production';\nif (!/^[a-z0-9][a-z0-9_.-]{0,49}$/i.test(lbl)) {\n  throw new Error(`get-prompt: invalid label ${JSON.stringify(label)}`);\n}\nreturn [{ json: { prompt_name, label: lbl } }];\n"
+      },
+      "id": "validate-input",
+      "name": "Validate input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.LANGFUSE_BASE_URL }}/api/public/v2/prompts/{{ $json.prompt_name }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "label", "value": "={{ $json.label }}" }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "langfuse-get-prompt",
+      "name": "Langfuse: get prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpBasicAuth": { "id": "langfuse", "name": "Langfuse API" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { prompt_name } = $('Validate input').first().json;\nconst p = $input.first().json;\nif (p.type !== 'text' || typeof p.prompt !== 'string' || !p.prompt.trim()) {\n  throw new Error(`get-prompt: Langfuse returned an unusable prompt for '${prompt_name}' (type=${p.type})`);\n}\nreturn [{ json: {\n  prompt_text: p.prompt,\n  prompt_name,\n  prompt_version: p.version,\n  prompt_config: p.config ?? {},\n  source: 'langfuse'\n} }];\n"
+      },
+      "id": "normalize-langfuse",
+      "name": "Normalize Langfuse prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, -100]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "=/files/prompts/{{ $('Validate input').first().json.prompt_name }}.md",
+        "options": {}
+      },
+      "id": "read-fallback",
+      "name": "Read fallback file",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [680, 100]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "prompt_text",
+        "options": {}
+      },
+      "id": "extract-fallback",
+      "name": "Extract fallback text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [900, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Langfuse failed (timeout / non-2xx / connection error): serve the last known production text.\nconst { prompt_name } = $('Validate input').first().json;\nconst text = $input.first().json.prompt_text;\nif (typeof text !== 'string' || !text.trim()) {\n  throw new Error(`get-prompt: Langfuse unreachable AND fallback /files/prompts/${prompt_name}.md is empty — run npm run seed-prompts`);\n}\nreturn [{ json: { prompt_text: text, prompt_name, prompt_version: null, prompt_config: {}, source: 'file_fallback' } }];\n"
+      },
+      "id": "normalize-fallback",
+      "name": "Normalize fallback prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 100]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Validate input", "type": "main", "index": 0 }]]
+    },
+    "Validate input": {
+      "main": [[{ "node": "Langfuse: get prompt", "type": "main", "index": 0 }]]
+    },
+    "Langfuse: get prompt": {
+      "main": [
+        [{ "node": "Normalize Langfuse prompt", "type": "main", "index": 0 }],
+        [{ "node": "Read fallback file", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read fallback file": {
+      "main": [[{ "node": "Extract fallback text", "type": "main", "index": 0 }]]
+    },
+    "Extract fallback text": {
+      "main": [[{ "node": "Normalize fallback prompt", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

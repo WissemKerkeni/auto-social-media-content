@@ -260,6 +260,8 @@ model Post {
   captionModel         String? @map("caption_model")
   captionPromptVersion Int?    @map("caption_prompt_version")
   langfuseTraceId      String? @map("langfuse_trace_id")
+  /// Choices made by tn-core prepare: origin, scene brief, light, source asset, cooldown fallback.
+  productionContext    Json?   @map("production_context")
 
   scheduledFor DateTime? @map("scheduled_for") @db.Timestamptz(3)
   publishedAt  DateTime? @map("published_at") @db.Timestamptz(3)
@@ -371,4 +373,17 @@ model GenerationError {
   @@index([createdAt])
   @@index([stage, createdAt])
   @@map("generation_errors")
+}
+
+/// Daily external API call counter (Africa/Tunis day). Incremented atomically by
+/// tn_reserve_api_call() BEFORE each model call, so caps hold even under retries/loops.
+model ApiUsage {
+  day       DateTime @db.Date
+  /// gemini_image | anthropic
+  provider  String
+  calls     Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@id([day, provider])
+  @@map("api_usage")
 }

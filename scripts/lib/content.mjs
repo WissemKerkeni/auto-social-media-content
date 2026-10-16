@@ -7,6 +7,8 @@ const fill = (template, values) => template.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, 
 
 /**
  * Bilingual disclosure for an image origin.
+ * @param {{origin: string, placeAr: string, placeEn: string, attribution?: string | null}} args
+ * @param {any} config prompts/config.json
  * @returns {{ derja: string, en: string, text: string }} text = derja + "\n" + en (what the model must echo)
  */
 export function buildDisclosure({ origin, placeAr, placeEn, attribution = null }, config) {

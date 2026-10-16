@@ -7,7 +7,7 @@ Status legend: ✅ done & verified · 🟡 in progress · ⬜ not started
 | A | Local environment: Docker Compose (n8n + PostgreSQL + S3 stand-in), env tooling, health checks | ✅ |
 | A+ | Langfuse (prompt versions + OTLP tracing), `seed-prompts`, `bootstrap-n8n`, `dev-up` (ported from instabot-core) | ✅ |
 | B | Prisma schema, migrations, seed data, safe slot claiming ([data model](data-model.md)) | ✅ |
-| C | Gemini client, image pipeline, captions, `TN-01 Daily Content Producer` workflow | ⬜ |
+| C | Gemini client, image pipeline, captions, `TN-01 Daily Content Producer` workflow ([content production](content-production.md)) | ✅ (verified live; imported inactive) |
 | D | Dispatcher + Facebook / Instagram / TikTok publishing workflows | ⬜ |
 | E | Pre-publication gates, retries/backoff, reconciliation, error workflow | ⬜ |
 | F | Deployment guides: hosting, Cloudflare R2, Prisma Postgres, migration & backups | ⬜ |

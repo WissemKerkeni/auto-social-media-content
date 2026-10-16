@@ -108,3 +108,14 @@ test('tn_complete_slot only accepts terminal outcomes', async () => {
   await claim('w');
   await assert.rejects(db.query("SELECT tn_complete_slot($1, 'w', 'pending')", [id]), /outcome must be/);
 });
+
+test('daily API caps hold under concurrent reservations', async () => {
+  await setConfig(db, 'cap_gemini_image_per_day', 3);
+  const results = await Promise.all(Array.from({ length: 12 }, () =>
+    db.query("SELECT tn_reserve_api_call('gemini_image', 'cap_gemini_image_per_day', 99) AS ok")));
+  assert.equal(results.filter((r) => r.rows[0].ok).length, 3, 'exactly the cap is granted');
+  const usage = (await db.query("SELECT calls FROM api_usage WHERE provider = 'gemini_image'")).rows[0];
+  assert.equal(usage.calls, 3);
+  const other = await db.query("SELECT tn_reserve_api_call('anthropic', 'cap_anthropic_per_day', 2) AS ok");
+  assert.equal(other.rows[0].ok, true, 'caps are per provider; missing config key uses the default');
+});

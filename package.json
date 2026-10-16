@@ -19,7 +19,7 @@
     "ps": "docker compose ps",
     "doctor": "node scripts/doctor.mjs",
     "verify:models": "node scripts/verify-models.mjs",
-    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test": "node --import tsx --test \"tests/*.test.mjs\" \"tests/core/**/*.test.ts\"",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -27,19 +27,22 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "typecheck": "tsc -p tsconfig.json",
-    "test:db": "node --import tsx --test --test-concurrency=1 \"tests/db/**/*.test.ts\""
+    "test:db": "node --import tsx --test --test-concurrency=1 \"tests/db/**/*.test.ts\"",
+    "meta:setup": "node scripts/meta-setup.mjs",
+    "meta:check": "node scripts/meta-setup.mjs --check"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",
     "@prisma/client": "7.10.0",
     "dotenv": "17.2.3",
     "pg": "8.23.1",
-    "prisma": "7.10.0"
+    "prisma": "7.10.0",
+    "sharp": "0.35.5",
+    "tsx": "4.20.6"
   },
   "devDependencies": {
     "@types/node": "22.18.12",
     "@types/pg": "8.15.5",
-    "tsx": "4.20.6",
     "typescript": "5.9.3"
   },
   "overrides": {

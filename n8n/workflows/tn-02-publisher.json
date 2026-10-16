@@ -1,0 +1,324 @@
+{
+  "id": "tn-02-publisher",
+  "name": "TN-02 Publisher (Facebook + Instagram)",
+  "meta": {
+    "description": "Every 5 min: tn-core claims ONE due publication (kill switch, enabled + configured platform, daily cap, never more than 60 min late) and returns its next Graph API step; [SUB] Graph call executes it with the meta-graph credential; tn-core applies the response and returns the next step, until the publication is done. Then the next due publication (up to 5 per run). TikTok is not handled here."
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "every-5-min",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Run now (manual)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/publish/claim",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ worker: 'n8n:' + $execution.id }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "tn-core-claim",
+      "name": "tn-core: claim",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        240,
+        100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop entry: a claim result or an apply result → the next step, if any.\nconst j = $input.first().json;\nreturn [{ json: {\n  has_step: Boolean(j.step), done: j.done === true,\n  publication_id: j.publication_id ?? null, attempt_no: j.attempt_no ?? null, platform: j.platform ?? null,\n  step: j.step ?? null, outcome: j.outcome ?? j.reason ?? null, message: j.message ?? null,\n} }];"
+      },
+      "id": "step",
+      "name": "Step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Has step?",
+              "leftValue": "={{ $json.has_step }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-step",
+      "name": "Has step?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "graph-call",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "value": {
+            "publication_id": "={{ $json.publication_id }}",
+            "attempt_no": "={{ $json.attempt_no }}",
+            "step": "={{ $json.step }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "graph-call",
+      "name": "Graph call",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        940,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://tn-core:8080/v1/publish/apply",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ...$json, worker: 'n8n:' + $execution.id }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "tn-core-apply",
+      "name": "tn-core: apply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Claim another?",
+              "leftValue": "={{ $json.done && $runIndex < 5 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-more",
+      "name": "Claim another?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        940,
+        220
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "idle",
+      "name": "Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1180,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "tn-core: claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (manual)": {
+      "main": [
+        [
+          {
+            "node": "tn-core: claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: claim": {
+      "main": [
+        [
+          {
+            "node": "Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Step": {
+      "main": [
+        [
+          {
+            "node": "Has step?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has step?": {
+      "main": [
+        [
+          {
+            "node": "Graph call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Claim another?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph call": {
+      "main": [
+        [
+          {
+            "node": "tn-core: apply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: apply": {
+      "main": [
+        [
+          {
+            "node": "Step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim another?": {
+      "main": [
+        [
+          {
+            "node": "tn-core: claim",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Tunis",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

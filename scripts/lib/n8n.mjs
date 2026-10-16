@@ -25,6 +25,12 @@ export const CREDENTIAL_SPECS = [
     data: (e) => ({ endpoint: e.S3_ENDPOINT, region: e.S3_REGION || 'auto', accessKeyId: e.S3_ACCESS_KEY_ID, secretAccessKey: e.S3_SECRET_ACCESS_KEY, forcePathStyle: e.S3_FORCE_PATH_STYLE !== 'false', ignoreSSLIssues: false }),
   },
   {
+    // n8n → tn-core (internal content service)
+    id: 'tn-core', name: 'tn-core API', type: 'httpHeaderAuth',
+    needs: ['TN_CORE_TOKEN'],
+    data: (e) => ({ name: 'Authorization', value: `Bearer ${e.TN_CORE_TOKEN}` }),
+  },
+  {
     // Preferred for HTTP Request nodes calling the Messages API (captions).
     id: 'anthropic-header', name: 'Anthropic API (x-api-key)', type: 'httpHeaderAuth',
     needs: ['ANTHROPIC_API_KEY'],
@@ -47,6 +53,13 @@ export const CREDENTIAL_SPECS = [
     id: 'gemini-header', name: 'Gemini API (x-goog-api-key)', type: 'httpHeaderAuth',
     needs: ['GEMINI_API_KEY'],
     data: (e) => ({ name: 'x-goog-api-key', value: e.GEMINI_API_KEY }),
+  },
+  {
+    // Meta Graph API (Facebook Page + Instagram), used only by [SUB] Graph call. A Page access
+    // token (long-lived, from `npm run meta:setup`) sent as a Bearer header, never in URLs.
+    id: 'meta-graph', name: 'Meta Graph API', type: 'httpHeaderAuth',
+    needs: ['META_PAGE_ACCESS_TOKEN'],
+    data: (e) => ({ name: 'Authorization', value: `Bearer ${e.META_PAGE_ACCESS_TOKEN}` }),
   },
 ];
 
@@ -86,6 +99,7 @@ const SECRET_PATTERNS = [
   [/sk-lf-[0-9a-z-]{8,}/i, 'Langfuse secret key'],
   [/pk-lf-[0-9a-z-]{8,}/i, 'Langfuse public key'],
   [/AIza[0-9A-Za-z_-]{30,}/, 'Google API key'],
+  [/EAA[A-Za-z0-9]{30,}/, 'Meta access token'],
   [/"(password|apiKey|accessToken|secretAccessKey)"\s*:\s*"[^"={][^"]{3,}"/, 'inline credential field'],
   [/Bearer\s+[A-Za-z0-9._-]{16,}/, 'bearer token'],
 ];

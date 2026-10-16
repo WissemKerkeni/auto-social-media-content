@@ -41,7 +41,7 @@ const env = parseEnv(readFileSync(resolve(root, '.env'), 'utf8'));
 
 step(`docker compose up (profiles: ${env.COMPOSE_PROFILES || 'none'})`);
 if (flag('--recreate')) run('docker', ['compose', 'down']);
-run('docker', ['compose', 'up', '-d', '--wait']);
+run('docker', ['compose', 'up', '-d', '--build', '--wait']);
 
 step('databases (idempotent init)');
 run('docker', ['compose', 'exec', '-T', 'postgres', 'sh', '/docker-entrypoint-initdb.d/10-create-databases.sh']);

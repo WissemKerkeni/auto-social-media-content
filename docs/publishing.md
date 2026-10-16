@@ -121,6 +121,16 @@ To run one pass by hand:
 docker compose exec -u node -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=tn-02-publisher
 ```
 
+## Verified live (2026-10-16)
+
+The Ghar El Melh post produced on 2026-10-13 was published by hand, one platform at a time,
+with the kill switch on only for the run:
+
+| Platform | Steps | Result |
+|---|---|---|
+| Facebook | `fb_publish` → `fb_permalink` | published on attempt 1 |
+| Instagram | `ig_stage` → `ig_stage_url` → `ig_container` → `ig_status` → `ig_publish` → `ig_permalink` | published on attempt 1; the container was `FINISHED` at the first status check |
+
 ## tn-core API
 
 | Endpoint | Purpose |

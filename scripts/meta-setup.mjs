@@ -73,7 +73,9 @@ async function verify(pageToken, pageId, igUserId) {
     const missing = missingScopes(dbg.scopes);
     if (missing.length) fail(`token lacks permissions: ${missing.join(', ')} — grant them in the Graph API Explorer and run meta:setup again`);
     ok(`permissions: ${dbg.scopes.filter((s) => /^(pages_|instagram_)/.test(s)).join(', ')}`);
-    ok(dbg.expires_at === 0 ? 'token does not expire' : `token expires ${new Date(dbg.expires_at * 1000).toISOString()} (expected a never-expiring Page token)`);
+    if (dbg.type !== 'PAGE') fail(`META_PAGE_ACCESS_TOKEN is a ${dbg.type} token, not a Page token — run npm run meta:setup instead of pasting the Explorer token into .env`);
+    if (dbg.expires_at !== 0) fail(`token expires ${new Date(dbg.expires_at * 1000).toISOString()} — expected a never-expiring Page token; run npm run meta:setup again`);
+    ok('Page token, does not expire');
   }
   if (igUserId) {
     const ig = await graph(igUserId, pageToken, { fields: 'id,username' });

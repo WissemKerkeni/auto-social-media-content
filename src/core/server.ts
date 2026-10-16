@@ -8,6 +8,9 @@
 //   POST /v1/production/apply-caption  { slot_id, worker, post_id, response, prompt_version }
 //   POST /v1/production/schedule       { slot_id, worker, post_id }
 //   POST /v1/production/park           { slot_id, worker, post_id?, outcome, stage, reason, details? }
+//   POST /v1/publish/claim             { worker }
+//   POST /v1/publish/apply             { publication_id, attempt_no, phase, result, worker }
+//   GET  /v1/publish/media?publication_id=…&attempt_no=…   image bytes for the current upload step
 // Logs are one JSON object per line; request bodies (images, prompts) are never logged.
 import 'dotenv/config';
 import http from 'node:http';
@@ -15,6 +18,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { loadConfig } from './config.ts';
 import { createPrisma } from '../db.ts';
 import { HttpError, ProductionService } from './service.ts';
+import { PublishService } from './publisher.ts';
 
 const MAX_BODY = 25 * 1024 * 1024;
 
@@ -49,6 +53,7 @@ export function createServer() {
   const cfg = loadConfig();
   const db = createPrisma(cfg.databaseUrl);
   const svc = new ProductionService(db, cfg);
+  const pub = new PublishService(db, cfg);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const routes: Record<string, (b: any) => Promise<unknown>> = {
     '/v1/production/prepare': (b) => svc.prepare(b),
@@ -59,6 +64,8 @@ export function createServer() {
     '/v1/production/apply-caption': (b) => svc.applyCaption(b),
     '/v1/production/schedule': (b) => svc.schedule(b),
     '/v1/production/park': (b) => svc.park(b),
+    '/v1/publish/claim': (b) => pub.claim(b),
+    '/v1/publish/apply': (b) => pub.apply(b),
   };
 
   const server = http.createServer(async (req, res) => {
@@ -73,6 +80,15 @@ export function createServer() {
       if (req.method === 'GET' && path === '/healthz') {
         await db.$queryRaw`SELECT 1`;
         return send(200, { ok: true });
+      }
+      if (req.method === 'GET' && path === '/v1/publish/media') {
+        if (!authorized(req.headers.authorization, cfg.token)) return send(401, { error: 'unauthorized' });
+        const q = new URL(req.url ?? '/', 'http://x').searchParams;
+        const m = await pub.media({ publication_id: q.get('publication_id') ?? '', attempt_no: Number(q.get('attempt_no')) });
+        res.writeHead(200, { 'content-type': m.mimeType, 'content-length': m.bytes.length, 'content-disposition': 'inline; filename="image.jpg"' });
+        res.end(m.bytes);
+        log('info', 'request', { method: req.method, path, status: 200, bytes: m.bytes.length, ms: Date.now() - started });
+        return;
       }
       const handler = routes[path];
       if (!handler || req.method !== 'POST') return send(404, { error: 'not_found' });

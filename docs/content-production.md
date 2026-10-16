@@ -79,7 +79,7 @@ npm run bootstrap:n8n
 
 Or toggle it in the n8n editor (`Workflows → TN-01 Daily Content Producer → Active`).
 
-**Publishing to Facebook, Instagram and TikTok is a separate workflow (Phase D)** behind the
+**Publishing to Facebook and Instagram is a separate workflow** ([Phase D, TN-02](publishing.md)) behind the
 global kill switch (`app_config.publishing_enabled`, currently `false`). Production only queues
 `scheduled` posts.
 

@@ -1,5 +1,5 @@
 // tn-core configuration from environment + repo prompt files. No third-party API keys here:
-// model calls are made by n8n with its own credentials; tn-core only builds the requests.
+// model and Graph API calls are made by n8n with its own credentials; tn-core only builds the requests.
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,8 @@ export interface CoreConfig {
     textModel: string; captionEffort: string; auditEffort: string; maxTokens: number;
     imageModel: string; imageSize: string; aspectRatio: string;
   };
+  /** Meta Graph API ids (not secrets). The access token is an n8n credential, never seen here. */
+  meta: { graphBaseUrl: string; graphVersion: string; pageId: string | null; igUserId: string | null };
   promptsConfig: Record<string, unknown> & {
     hashtag_max: number; caption_derja_max_chars: number; caption_en_max_chars: number; alt_text_max_chars: number;
     ai_alt_text_prefix: string; disclosure: Record<string, { derja: string; en: string }>;
@@ -54,6 +56,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
       imageModel: env.GEMINI_IMAGE_MODEL || 'gemini-nano-banana-2.1',
       imageSize: env.GEMINI_IMAGE_SIZE || '2K',
       aspectRatio: env.GEMINI_IMAGE_ASPECT_RATIO || '4:5',
+    },
+    meta: {
+      graphBaseUrl: env.META_GRAPH_BASE_URL || 'https://graph.facebook.com',
+      graphVersion: env.META_GRAPH_VERSION || 'v26.0',
+      pageId: env.META_PAGE_ID?.trim() || null,
+      igUserId: env.META_IG_USER_ID?.trim() || null,
     },
     promptsConfig: json('config.json'),
     captionSchema: json('schemas/caption.schema.json'),

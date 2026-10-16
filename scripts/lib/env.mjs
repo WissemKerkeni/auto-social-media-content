@@ -233,6 +233,20 @@ export function validateEnv(vars, { templateVars = {} } = {}) {
     }
   }
 
+  // Meta publishing (Phase D)
+  for (const name of ['META_PAGE_ID', 'META_IG_USER_ID', 'META_APP_ID']) {
+    if (vars[name] && !/^\d+$/.test(vars[name])) errors.push(`${name} must be a numeric id`);
+  }
+  if (vars.META_GRAPH_VERSION && !/^v\d+\.\d+$/.test(vars.META_GRAPH_VERSION)) errors.push('META_GRAPH_VERSION must look like v26.0');
+  if (vars.PUBLISHING_ENABLED === 'true') {
+    const platforms = (vars.ENABLED_PLATFORMS ?? '').split(',').map((p) => p.trim());
+    const missing = [];
+    if (platforms.includes('facebook') && !vars.META_PAGE_ID) missing.push('META_PAGE_ID');
+    if (platforms.includes('instagram') && !vars.META_IG_USER_ID) missing.push('META_IG_USER_ID');
+    if ((platforms.includes('facebook') || platforms.includes('instagram')) && !vars.META_PAGE_ACCESS_TOKEN) missing.push('META_PAGE_ACCESS_TOKEN');
+    if (missing.length) warnings.push(`PUBLISHING_ENABLED=true but ${missing.join(', ')} empty; those platforms are not published (run npm run meta:setup)`);
+  }
+
   if (vars.DATABASE_URL && !/^postgres(ql)?:\/\//.test(vars.DATABASE_URL)) {
     errors.push('DATABASE_URL must start with postgresql://');
   }

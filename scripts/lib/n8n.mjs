@@ -54,6 +54,13 @@ export const CREDENTIAL_SPECS = [
     needs: ['GEMINI_API_KEY'],
     data: (e) => ({ name: 'x-goog-api-key', value: e.GEMINI_API_KEY }),
   },
+  {
+    // Meta Graph API (Facebook Page + Instagram), used only by [SUB] Graph call. A Page access
+    // token (long-lived, from `npm run meta:setup`) sent as a Bearer header, never in URLs.
+    id: 'meta-graph', name: 'Meta Graph API', type: 'httpHeaderAuth',
+    needs: ['META_PAGE_ACCESS_TOKEN'],
+    data: (e) => ({ name: 'Authorization', value: `Bearer ${e.META_PAGE_ACCESS_TOKEN}` }),
+  },
 ];
 
 const isBlank = (v) => v === undefined || v === null || String(v).trim() === '' || /^__(GENERATE|DERIVED)__$/.test(v);
@@ -92,6 +99,7 @@ const SECRET_PATTERNS = [
   [/sk-lf-[0-9a-z-]{8,}/i, 'Langfuse secret key'],
   [/pk-lf-[0-9a-z-]{8,}/i, 'Langfuse public key'],
   [/AIza[0-9A-Za-z_-]{30,}/, 'Google API key'],
+  [/EAA[A-Za-z0-9]{30,}/, 'Meta access token'],
   [/"(password|apiKey|accessToken|secretAccessKey)"\s*:\s*"[^"={][^"]{3,}"/, 'inline credential field'],
   [/Bearer\s+[A-Za-z0-9._-]{16,}/, 'bearer token'],
 ];

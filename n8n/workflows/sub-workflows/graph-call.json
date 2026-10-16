@@ -1,0 +1,576 @@
+{
+  "id": "graph-call",
+  "name": "[SUB] Graph call",
+  "meta": {
+    "description": "Executes ONE Meta Graph API step built by tn-core (TN-02). Uploads stream the approved image from tn-core as multipart. Never retries: tn-core decides what a response means, and the publishing calls are not idempotent.",
+    "inputs": "publication_id (string), attempt_no (number), step ({ kind: graph_get|graph_post|upload_publish|upload_stage, phase, url, body?, message? })",
+    "outputs": "publication_id, attempt_no, phase, result ({ status, body } | { transport_error } | { local_error })"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "publication_id",
+              "type": "string"
+            },
+            {
+              "name": "attempt_no",
+              "type": "number"
+            },
+            {
+              "name": "step",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Only steps built by tn-core reach Meta: a known kind, a phase, an http(s) Graph URL.\nconst { publication_id, attempt_no, step } = $input.first().json;\nconst kinds = ['graph_get', 'graph_post', 'upload_publish', 'upload_stage'];\nif (!step || !kinds.includes(step.kind) || !step.phase || !/^https?:\\/\\/[^/]+\\/v\\d+\\.\\d+\\//.test(step.url || '')) {\n  throw new Error(`graph-call: invalid step ${JSON.stringify(step).slice(0, 300)}`);\n}\nif (!publication_id || !attempt_no) throw new Error('graph-call: publication_id and attempt_no are required');\nreturn [{ json: { publication_id, attempt_no: Number(attempt_no), step } }];"
+      },
+      "id": "validate-step",
+      "name": "Validate step",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Upload?",
+              "leftValue": "={{ $json.step.kind.startsWith('upload') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-upload",
+      "name": "Upload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://tn-core:8080/v1/publish/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "publication_id",
+              "value": "={{ $json.publication_id }}"
+            },
+            {
+              "name": "attempt_no",
+              "value": "={{ $json.attempt_no }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "tn-core-image",
+      "name": "tn-core: image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        -120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "tn-core",
+          "name": "tn-core API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Publish upload?",
+              "leftValue": "={{ $('Validate step').first().json.step.kind === 'upload_publish' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-publish-upload",
+      "name": "Publish upload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate step').first().json.step.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "source",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "message",
+              "value": "={{ $('Validate step').first().json.step.message }}"
+            },
+            {
+              "name": "published",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "graph-upload-publish",
+      "name": "Graph: publish photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "meta-graph",
+          "name": "Meta Graph API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate step').first().json.step.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "source",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "published",
+              "value": "false"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "graph-upload-stage",
+      "name": "Graph: stage photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "meta-graph",
+          "name": "Meta Graph API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "GET?",
+              "leftValue": "={{ $json.step.kind === 'graph_get' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-get",
+      "name": "GET?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.step.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "graph-get",
+      "name": "Graph: GET",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        60
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "meta-graph",
+          "name": "Meta Graph API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.step.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.step.body) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "graph-post",
+      "name": "Graph: POST",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "meta-graph",
+          "name": "Meta Graph API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $('Validate step').first().json;\nconst r = $input.first().json;\nreturn [{ json: { publication_id: s.publication_id, attempt_no: s.attempt_no, phase: s.step.phase, result: { status: r.statusCode, body: r.body ?? null } } }];"
+      },
+      "id": "result",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The Graph call itself failed (timeout, connection reset…): the outcome is unknown.\nconst s = $('Validate step').first().json;\nconst e = $input.first().json.error;\nconst message = String(e?.message || e?.description || 'transport error').slice(0, 500);\nreturn [{ json: { publication_id: s.publication_id, attempt_no: s.attempt_no, phase: s.step.phase, result: { transport_error: message } } }];"
+      },
+      "id": "transport-error",
+      "name": "Transport error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nothing was sent to Meta: safe to retry.\nconst s = $('Validate step').first().json;\nconst e = $input.first().json.error;\nconst message = 'image download from tn-core failed: ' + String(e?.message || 'unknown').slice(0, 400);\nreturn [{ json: { publication_id: s.publication_id, attempt_no: s.attempt_no, phase: s.step.phase, result: { local_error: message } } }];"
+      },
+      "id": "local-error",
+      "name": "Image download failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -300
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Validate step",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate step": {
+      "main": [
+        [
+          {
+            "node": "Upload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload?": {
+      "main": [
+        [
+          {
+            "node": "tn-core: image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GET?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "tn-core: image": {
+      "main": [
+        [
+          {
+            "node": "Publish upload?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Image download failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish upload?": {
+      "main": [
+        [
+          {
+            "node": "Graph: publish photo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Graph: stage photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET?": {
+      "main": [
+        [
+          {
+            "node": "Graph: GET",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Graph: POST",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: publish photo": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transport error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: stage photo": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transport error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: GET": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transport error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: POST": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transport error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

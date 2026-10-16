@@ -18,9 +18,10 @@ published. Content that fails a check is skipped or held in `needs_review` and n
   locally, Cloudflare R2 in production).
 
 > **Project status:** the local environment, Langfuse prompt management/tracing, n8n
-> provisioning, both models, the data model (Phase B) and content production (Phase C, `TN-01`, verified live end to end) are done. Publishing to the platforms (Phase D) is **not built yet**, so nothing is posted anywhere.
-> See [docs/implementation-plan.md](docs/implementation-plan.md). No social platform
-> integration has been tested against a real API.
+> provisioning, both models, the data model (Phase B) and content production (Phase C, `TN-01`, verified live end to end) are done. Publishing to Facebook and Instagram (Phase D, `TN-02`) is built and tested against a
+> simulated Graph API, but **not yet connected to Meta** (needs `npm run meta:setup`, see
+> [docs/publishing.md](docs/publishing.md)) and off behind the kill switch, so nothing is posted
+> anywhere. TikTok is not built. See [docs/implementation-plan.md](docs/implementation-plan.md).
 
 ## Quick start (local)
 

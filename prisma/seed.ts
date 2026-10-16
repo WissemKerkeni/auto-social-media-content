@@ -61,6 +61,8 @@ const config: Record<string, { value: unknown; description: string }> = {
   slot_max_lateness_minutes: { value: 60, description: 'A slot not produced this long after its time is skipped, never published late' },
   slot_lease_minutes: { value: 20, description: 'Claim lease; an expired lease can be re-claimed' },
   slot_max_attempts: { value: 3, description: 'Claims per slot before it is marked failed' },
+  publish_max_attempts: { value: 5, description: 'Attempts per platform publication before it is marked failed (reconciliation gets twice as many)' },
+  publish_lease_minutes: { value: 10, description: 'Lease on a publication being published; an expired lease is reconciled, never blindly retried' },
 };
 
 type Seed = {
